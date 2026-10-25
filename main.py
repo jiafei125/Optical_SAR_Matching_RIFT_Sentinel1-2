@@ -90,13 +90,6 @@ t2 = time.perf_counter()
 log_info("*" * 70)
 log_info("对数变换 + 分位数拉伸")
 log_info("*" * 70)
-# histogram_match(
-#     sar_tif=sar_aligned,
-#     optical_tif=opt_tif,
-#     out_tif=sar_histogram,
-#     sar_mask_tif=common_mask,
-#     opt_mask_tif=None  # 共同掩模已经包含光学有效区，这里填None
-# )
 
 logarithmic_stretch(
         sar_tif=sar_aligned,
