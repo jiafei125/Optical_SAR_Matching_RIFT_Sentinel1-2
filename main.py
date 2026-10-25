@@ -259,7 +259,7 @@ log_info(f"   惯导初值: lat={scene_lat:.4f}°, lon={scene_lon:.4f}°, h={ins
 
 
 # 定位解算
-platform_ecef, rmse, inlier_idx = localization(points_ecef, R, init_ecef, threshold=20.0, max_iter=3)
+platform_ecef, rmse, inlier_idx = localization(points_ecef, R, init_ecef, threshold=15.0, max_iter=3)
 
 # 输出
 lat, lon, h = ecef_to_geodetic(*platform_ecef)
