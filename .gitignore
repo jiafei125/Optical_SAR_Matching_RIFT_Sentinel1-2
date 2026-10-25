@@ -1,0 +1,26 @@
+# Python缓存文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# PyCharm 工程配置
+.idea/
+*.iml
+
+# 数据、输出结果（重点！你的data、output都会被忽略不上传）
+data/
+output/
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+
+# 日志
+*.log
