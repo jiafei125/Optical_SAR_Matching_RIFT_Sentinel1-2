@@ -19,15 +19,18 @@ from common import read_band, write_band, describe, NODATA
 
 def detect_cloud_otsu(arr, base_mask,
                       min_cloud_threshold=0.35,
-                      morph_kernel_size=5):
+                      morph_kernel_size=5,
+                      use_otsu_adaptive=True):
     """
-    基于 OTSU + 形态学 的云检测
-
+    基于 OTSU + 形态学 的云检测，增加自适应阈值开关
     参数:
         arr: 反射率数组
-        base_mask: M1 基础有效掩膜
-        min_cloud_threshold: 云的最低亮度（避免把暗区误判为云）
+        base_mask: M1 基础有效掩膜（已经过滤NaN/NODATA）
+        min_cloud_threshold: 云的最低亮度（use_otsu_adaptive=False时为固定阈值；True时作为下限）
         morph_kernel_size: 形态学核大小
+        use_otsu_adaptive: 是否启用OTSU自适应阈值
+            - True：OTSU自适应阈值，同时不低于 min_cloud_threshold
+            - False：直接使用 min_cloud_threshold 作为固定亮度阈值
     """
     cloud_mask = np.zeros_like(arr, dtype=bool)
 
@@ -43,20 +46,27 @@ def detect_cloud_otsu(arr, base_mask,
     roi_norm = np.clip((roi - vmin) / (vmax - vmin), 0, 1) * 255
     roi_norm = roi_norm.astype(np.uint8)
 
-    # 2. OTSU 自适应阈值
-    otsu_thresh, _ = cv2.threshold(
-        roi_norm, 0, 255,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
+    if use_otsu_adaptive:
+        # 2. OTSU 自适应阈值
+        otsu_thresh, _ = cv2.threshold(
+            roi_norm, 0, 255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        # 3. 双重条件：OTSU阈值 + 最低亮度约束
+        min_thresh_norm = (min_cloud_threshold - vmin) / (vmax - vmin) * 255
+        final_thresh = max(otsu_thresh, min_thresh_norm)
+    else:
+        # 关闭OTSU，直接用固定阈值映射到归一化0-255空间
+        otsu_thresh = np.nan
+        final_thresh = (min_cloud_threshold - vmin) / (vmax - vmin) * 255
 
-    # 3. 双重条件：OTSU阈值 + 最低亮度约束
-    min_thresh_norm = (min_cloud_threshold - vmin) / (vmax - vmin) * 255
-    final_thresh = max(otsu_thresh, min_thresh_norm)
+    # 修复：防止阈值越界 <0 或者 >255
+    final_thresh = np.clip(final_thresh, 0, 255)
 
     # 4. 亮度检测
     cloud_roi = roi_norm > final_thresh
 
-    # 5. 形态学处理（在 ROI 上）
+    # 5. 形态学处理
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (morph_kernel_size, morph_kernel_size)
     )
@@ -72,18 +82,27 @@ def detect_cloud_otsu(arr, base_mask,
 
     cloud_mask = cloud_close > 127
 
-    print(f"[云检测] OTSU阈值={otsu_thresh:.1f}, 最终阈值={final_thresh:.1f}, "
-          f"云像素占比={cloud_mask.mean()*100:.2f}%")
+    # 优化：统计【仅有效区域内】云占比，更符合调试直觉
+    cloud_in_roi = cloud_mask[base_mask]
+    cloud_ratio = cloud_in_roi.mean() * 100 if cloud_in_roi.size > 0 else 0.0
+
+    if use_otsu_adaptive:
+        print(f"[云检测][OTSU开启] OTSU阈值={otsu_thresh:.1f}, 最终阈值={final_thresh:.1f}, "
+              f"ROI内云像素占比={cloud_ratio:.2f}%")
+    else:
+        print(f"[云检测][OTSU关闭] 固定阈值={final_thresh:.1f}, "
+              f"ROI内云像素占比={cloud_ratio:.2f}%")
 
     return cloud_mask
 
 
-def detect_shadow(arr, base_mask, cloud_mask,
+def detect_shadow(arr, valid_mask, cloud_mask,
                   shadow_ratio=0.6,
                   morph_kernel_size=3):
     """
     阴影检测（可选）：云的邻域内暗区
     简化策略：低于局部均值的暗区，且靠近云
+    【修改】入参 valid_mask：过滤完NODATA/NaN的有效掩膜，不再用原始base_mask
     """
     if cloud_mask.sum() == 0:
         return np.zeros_like(arr, dtype=bool)
@@ -94,22 +113,27 @@ def detect_shadow(arr, base_mask, cloud_mask,
     )
     cloud_dilated = cv2.dilate(cloud_mask.astype(np.uint8), kernel, iterations=2) > 0
 
-    # 暗区：低于全局均值的 shadow_ratio 倍
-    valid_vals = arr[base_mask]
+    # 暗区：低于全局均值的 shadow_ratio 倍，只用有效区域统计均值
+    valid_vals = arr[valid_mask]
+    if valid_vals.size == 0:
+        return np.zeros_like(arr, dtype=bool)
     global_mean = np.mean(valid_vals)
-    dark_mask = (arr < global_mean * shadow_ratio) & base_mask
+    dark_mask = (arr < global_mean * shadow_ratio) & valid_mask
 
-    # 阴影 = 暗区 ∩ 云邻域
+    # 阴影 = 暗区 ∩ 云邻域 ∩ 非云
     shadow_mask = dark_mask & cloud_dilated & (~cloud_mask)
 
-    print(f"[阴影检测] 阴影像素占比={shadow_mask.mean()*100:.2f}%")
+    shadow_in_roi = shadow_mask[valid_mask]
+    shadow_ratio_print = shadow_in_roi.mean() * 100 if shadow_in_roi.size > 0 else 0.0
+    print(f"[阴影检测] ROI内阴影像素占比={shadow_ratio_print:.2f}%")
 
     return shadow_mask
 
 
 def build_mask(arr, base_mask, nodata=NODATA,
                cloud_threshold=0.35,
-               use_shadow_detect=False):
+               use_shadow_detect=False,
+               use_otsu=True):
     """综合掩膜构建"""
     valid = base_mask.copy()
 
@@ -123,14 +147,15 @@ def build_mask(arr, base_mask, nodata=NODATA,
     # 3. 反射率合理范围（放宽，云可能>1）
     valid &= (arr >= 0.0)
 
-    # 4. 云检测
+    # 4. 云检测（传入已经过滤后的 valid）
     cloud_mask = detect_cloud_otsu(arr, valid,
-                                    min_cloud_threshold=cloud_threshold)
+                                   min_cloud_threshold=cloud_threshold,
+                                   use_otsu_adaptive=use_otsu)
     valid &= (~cloud_mask)
 
-    # 5. 阴影检测（可选）
+    # 5. 阴影检测（可选，传入valid而不是原始base_mask）
     if use_shadow_detect:
-        shadow_mask = detect_shadow(arr, base_mask, cloud_mask)
+        shadow_mask = detect_shadow(arr, valid, cloud_mask)
         valid &= (~shadow_mask)
 
     return valid
@@ -139,7 +164,8 @@ def build_mask(arr, base_mask, nodata=NODATA,
 def Implement3(m2_path="output/m2_optical_refl.tif",
                m1_mask_path="output/m1_valid_mask.npy",
                cloud_threshold=0.35,
-               use_shadow_detect=False):
+               use_shadow_detect=False,
+               use_otsu=True):
     """掩膜 + 云检测"""
     if not os.path.exists(m2_path):
         raise FileNotFoundError(f"输入影像不存在: {m2_path}")
@@ -155,7 +181,8 @@ def Implement3(m2_path="output/m2_optical_refl.tif",
         inp["arr"], base_mask,
         nodata=inp["nodata"],
         cloud_threshold=cloud_threshold,
-        use_shadow_detect=use_shadow_detect
+        use_shadow_detect=use_shadow_detect,
+        use_otsu=use_otsu
     )
 
     # 输出 npy
@@ -166,7 +193,8 @@ def Implement3(m2_path="output/m2_optical_refl.tif",
     write_band("output/m3_valid_mask.tif", mask_uint8,
                inp["profile"], nodata=0)
 
-    print(f"[输出] 有效率={valid.mean()*100:.2f}%")
+    valid_ratio = valid[base_mask].mean() * 100 if base_mask.sum()>0 else 0
+    print(f"[输出] ROI内最终有效率={valid_ratio:.2f}%")
 
     return "output/m3_valid_mask.tif", "output/m3_valid_mask.npy", valid
 

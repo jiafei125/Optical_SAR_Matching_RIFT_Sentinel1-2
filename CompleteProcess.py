@@ -26,6 +26,7 @@ m1_info = read_band(m1_path)
 
 print("----------------辐射校正（标准表观反射率）----------------")
 
+# "L2A_REFLECTANCE"针对Sentinel2等产品，不同的产品需要选择不同的参数
 m2_path = Implement2(m1_path = m1_path, mask_path = m1_mask_path, product_type="L2A_REFLECTANCE", scale_factor=10000.0)
 m2_info = read_band(m2_path)
 m1_mask = np.load(m1_mask_path)
@@ -33,7 +34,8 @@ m1_mask = np.load(m1_mask_path)
 
 print("--------------------掩膜+云检测--------------------")
 
-m3_tif, m3_npy, valid3 = Implement3(m2_path = m2_path, m1_mask_path = m1_mask_path, cloud_threshold=0.40, use_shadow_detect=False)
+# use_shadow_detect:是否开启阴影检测；use_otsu：是否开启自适应阈值
+m3_tif, m3_npy, valid3 = Implement3(m2_path = m2_path, m1_mask_path = m1_mask_path, cloud_threshold=0.4, use_shadow_detect=False, use_otsu = True)
 
 
 print("----------------------滤波-----------------------")

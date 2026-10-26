@@ -10,8 +10,7 @@ import rasterio
 import cv2
 
 NODATA = -9999.0
-# WORK_CRS = "EPSG:32650"
-# WORK_RES = 10.0
+
 
 # 控制是否使用print打印信息
 def log_info(msg, log_flag= True):
@@ -162,22 +161,21 @@ WGS84_A = 6378137.0  # 地球长半轴（米）
 WGS84_F = 1.0 / 298.257223563  # 扁率
 WGS84_E2 = 2 * WGS84_F - WGS84_F ** 2  # 从扁率 f 计算第一偏心率平方的标准公式
 
-"""
-经纬高 -> 地心坐标系（ECEF）
-
-公式：
-    N = a/√(1 - e^2 * (sinM)^2)
-    x = (N + h) * cosM * cosL
-    y = (N + h) * cosM * sinL
-    z = (N * (1-e^2) + h) * sinM
-其中：
-    N为卯酉圈曲率半径
-    M为纬度，L为经度
-    (x,y,z)为该点在地球三维空间中的绝对坐标
-"""
-
 
 def geodetic_to_ecef(lat_deg, lon_deg, h):
+    """
+    经纬高 -> 地心坐标系（ECEF）
+
+    公式：
+        N = a/√(1 - e^2 * (sinM)^2)
+        x = (N + h) * cosM * cosL
+        y = (N + h) * cosM * sinL
+        z = (N * (1-e^2) + h) * sinM
+    其中：
+        N为卯酉圈曲率半径
+        M为纬度，L为经度
+        (x,y,z)为该点在地球三维空间中的绝对坐标
+    """
     lat = np.deg2rad(lat_deg)
     lon = np.deg2rad(lon_deg)
     N = WGS84_A / np.sqrt(1 - WGS84_E2 * np.sin(lat) ** 2)
@@ -187,13 +185,12 @@ def geodetic_to_ecef(lat_deg, lon_deg, h):
     return np.array([x, y, z])
 
 
-"""
-地心坐标系（ECEF） -> 经纬高
-从 ECEF 到经纬度没有解析解，需要迭代
-"""
-
 
 def ecef_to_geodetic(x, y, z, max_iter=10, tol=1e-9):
+    """
+    地心坐标系（ECEF） -> 经纬高
+    从 ECEF 到经纬度没有解析解，需要迭代
+    """
     lon = np.arctan2(y, x)
 
     # 给定初值后，反复用新算出的N和h更新纬度，直到收敛。
@@ -211,18 +208,17 @@ def ecef_to_geodetic(x, y, z, max_iter=10, tol=1e-9):
     return np.rad2deg(lat), np.rad2deg(lon), h
 
 
-"""
-地心坐标系（ECEF） -> 东北天坐标系（ENU） 的旋转矩阵
-公式：
-    R = [-sinL        ,cosL          ,  0]
-        [-cosL * sinM ,-sinL * sinM ,cosM]
-        [cosL * cosM  ,cosM * sinL  ,sinM]
-其中：
-    M为纬度，L为经度
-"""
-
 
 def ecef_to_enu_matrix(lat_deg, lon_deg):
+    """
+    地心坐标系（ECEF） -> 东北天坐标系（ENU） 的旋转矩阵
+    公式：
+        R = [-sinL        ,cosL          ,  0]
+            [-cosL * sinM ,-sinL * sinM ,cosM]
+            [cosL * cosM  ,cosM * sinL  ,sinM]
+    其中：
+        M为纬度，L为经度
+    """
     lat = np.deg2rad(lat_deg)
     lon = np.deg2rad(lon_deg)
     R = np.array([
@@ -233,41 +229,37 @@ def ecef_to_enu_matrix(lat_deg, lon_deg):
     return R
 
 
-"""
-地心坐标系（ECEF） -> 东北天坐标系（ENU）
-先平移，再旋转
-"""
-
 
 def ecef_to_enu(point_ecef, origin_lat, origin_lon, origin_h):
+    """
+    地心坐标系（ECEF） -> 东北天坐标系（ENU）
+    先平移，再旋转
+    """
     origin_ecef = geodetic_to_ecef(origin_lat, origin_lon, origin_h)
     R = ecef_to_enu_matrix(origin_lat, origin_lon)
     return R @ (point_ecef - origin_ecef)
 
 
-"""
-东北天坐标系（ENU） -> 地心坐标系（ECEF）
-先逆旋转（旋转矩阵是正交矩阵，转置就是逆），再逆平移
-"""
-
 
 def enu_to_ecef(point_enu, origin_lat, origin_lon, origin_h):
+    """
+    东北天坐标系（ENU） -> 地心坐标系（ECEF）
+    先逆旋转（旋转矩阵是正交矩阵，转置就是逆），再逆平移
+    """
     origin_ecef = geodetic_to_ecef(origin_lat, origin_lon, origin_h)
     R = ecef_to_enu_matrix(origin_lat, origin_lon)
     return R.T @ point_enu + origin_ecef
 
 
-"""
-东北天坐标系（ENU） -> 成像坐标系
-把 ENU 点旋转到以平台航向为 X 轴的成像坐标系
-公式：
-    R = [cosγ ,sinγ ,0]
-        [-sinγ,cosγ ,0]
-        [0    ,0    ,1]    
-"""
-
-
 def enu_to_imaging(point_enu, heading_deg):
+    """
+    东北天坐标系（ENU） -> 成像坐标系
+    把 ENU 点旋转到以平台航向为 X 轴的成像坐标系
+    公式：
+        R = [cosγ ,sinγ ,0]
+            [-sinγ,cosγ ,0]
+            [0    ,0    ,1]
+    """
     gamma = np.deg2rad(heading_deg)
     R = np.array([
         [np.cos(gamma), np.sin(gamma), 0],
@@ -277,13 +269,11 @@ def enu_to_imaging(point_enu, heading_deg):
     return R @ point_enu
 
 
-"""
-成像坐标系 -> 东北天坐标系（ENU）
-逆旋转(旋转矩阵转置即可实现)
-"""
-
-
 def imaging_to_enu(point_xyz, heading_deg):
+    """
+    成像坐标系 -> 东北天坐标系（ENU）
+    逆旋转(旋转矩阵转置即可实现)
+    """
     gamma = np.deg2rad(heading_deg)
     R = np.array([
         [np.cos(gamma), -np.sin(gamma), 0],

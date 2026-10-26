@@ -1,5 +1,4 @@
 # m1_geometric.py
-#
 """
 模块1：几何校正（基础）
 输入:  data/optical_ori.tif
@@ -82,10 +81,10 @@ def Implement1(data_path="data/optical_v3.tif", DO_ORTHO=False):
 
     # 1.1 正射校正（可选）
     if DO_ORTHO:
-        if not os.path.exists("data/dem.tif"):
+        if not os.path.exists("data/dem_v2.tif"):
             raise FileNotFoundError("DEM文件不存在，无法正射校正")
         ortho = "output/m1_optical_ortho.tif"
-        orthorectify(data_path, ortho, dem="data/dem.tif")
+        orthorectify(data_path, ortho, dem="data/dem_v2.tif")
         src = ortho
     else:
         src = data_path
